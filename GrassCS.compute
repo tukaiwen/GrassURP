@@ -1,0 +1,263 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
+
+struct GrassBlade
+{
+    float3 position;
+    float3 rotAngle;
+    float hash;
+    float height;
+    float width;
+    float tilt;
+    float bend;
+    float3 surfaceNorm;
+    float windForce;
+    float sideBend;
+    float pushAngle; // an object push the grass away
+};
+
+struct ClumpParameters
+{
+    float pullToCentre;
+    float pointInSameDirection;
+    float baseHeight;
+    float heightRandom;
+    float baseWidth;
+    float widthRandom;
+    float baseTilt;
+    float tiltRandom;
+    float baseBend;
+    float bendRandom;
+};
+
+StructuredBuffer<ClumpParameters> _ClumpParameters;
+AppendStructuredBuffer<GrassBlade> _GrassBlades;
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+
+float2 HashFloat2(float2 p)
+{
+    float t = dot(p, float2(12.9898, 78.233));
+    float2 q = float2(t, t * 1.61803398875);
+    return frac(sin(q) * 43758.5453);
+}
+
+float3 _PeopleTransform;
+float _PeopleSpacing;
+
+//uint _Resolution;
+uint _ResolutionX;
+uint _ResolutionY;
+float _GrassSpacing;
+float _JitterStrength;
+
+// Terrain Parameters
+Texture2D<float4> _HeightMap;
+Texture2D<float4> _DetailMap;
+SamplerState LinearClampSampler;
+
+Texture2D<float4> ClumpTex;
+SamplerState samplerClumpTex;
+
+float _ClumpScale;
+float _NumClumpParameters;
+
+float3 _TerrainPosition;
+
+float3 _TilePosition;
+
+float _HeightMapScale;
+float _HeightMapMultiplier;
+
+float3 _WSpaceCameraPos;
+float _DistanceCullStartDist;
+float _DistanceCullEndDist;
+float _DistanceCullMininumGrassAmount;
+
+float4x4 _VP_MATRIX;
+float _FrustumCullNearOffset;
+float _FrustumCullEdgeOffset;
+
+Texture2D<float4> _LocalWindTex;
+SamplerState LinearRepeatSampler;
+float _LocalWindScale;
+float _LocalWindSpeed;
+float _LocalWindStrength;
+float _LocalWindRotateAmount;
+float _Time;
+
+float Rand(float3 vec)
+{
+    return frac(sin(dot(vec.xyz, float3(12.9898, 78.233, 53.539))) * 43758.5453);
+}
+
+float Remap(float t)
+{
+    return (2 * t) - 1;
+}
+
+
+float SampleHeight(float2 normalizedPos)
+{
+    float height = UnpackHeightmap(_HeightMap.SampleLevel(LinearClampSampler, normalizedPos, 0));
+    return height * _HeightMapMultiplier * 2;
+}
+
+float3 FitTerrainPosition(float3 position)
+{
+    float2 normalizedPos = (position.xz - _TerrainPosition.xz) / _HeightMapScale;
+    return float3(position.x, _TerrainPosition.y + SampleHeight(normalizedPos), position.z);
+}
+
+float SampleGrass(float2 normalizedPos)
+{
+    float value = _DetailMap.SampleLevel(LinearClampSampler, normalizedPos, 0).r;
+    return value;
+}
+
+uint DistanceCull(float3 worldPos, float hash)
+{
+    float d = distance(worldPos, _WSpaceCameraPos);
+    float distanceSmoothStep = 1 - smoothstep(_DistanceCullStartDist, _DistanceCullEndDist, d);
+    distanceSmoothStep = (distanceSmoothStep * (1 - _DistanceCullMininumGrassAmount)) + _DistanceCullMininumGrassAmount;
+    return hash > 1 - distanceSmoothStep ? 1 : 0;
+}
+
+uint FrustumCull(float3 worldPos)
+{
+    float4 clipPos = mul(_VP_MATRIX, float4(worldPos, 1));
+    return (clipPos.z > clipPos.w 
+        || clipPos.z < 0 
+        || clipPos.x > clipPos.w - _FrustumCullEdgeOffset
+        || clipPos.x < -clipPos.w + _FrustumCullEdgeOffset
+        || clipPos.y > clipPos.w 
+        || clipPos.y < -clipPos.w + _FrustumCullNearOffset)
+        ? 0 : 1;
+}
+
+//groupshared int base_bias;
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID)
+{
+    // TODO: insert actual code here!
+
+    if (id.x < _ResolutionX && id.y < _ResolutionY)
+    {
+        float3 position = float3(id.x, 0, id.y) * _GrassSpacing;
+        float2 hash = HashFloat2(id.xy);
+        float2 jitter = ((hash * 2) - 1) * _JitterStrength;
+        position.xz += jitter;
+        position.xz += (_TilePosition.xz - _TerrainPosition.xz);
+        
+        float2 clumpUV = position.xz * float2(_ClumpScale.xx);
+        float3 clumpData = ClumpTex.SampleLevel(samplerClumpTex, clumpUV, 0).xyz;
+        
+        float clumpParamsIndex = clumpData.x;
+        clumpParamsIndex = clamp(clumpParamsIndex, 0, _NumClumpParameters - 1);
+        ClumpParameters bladeParameters = _ClumpParameters[int(clumpParamsIndex)];
+        
+        float2 clumpCentre = (clumpData.yz + floor(clumpUV)) / float2(_ClumpScale.xx);
+        position.xz = lerp(position.xz, clumpCentre, bladeParameters.pullToCentre);
+        position.xz += _TerrainPosition.xz;
+        
+        
+        
+        float2 normalizedPos = (position.xz - _TerrainPosition.xz) / _HeightMapScale;
+        if (SampleGrass(normalizedPos) < 0.5)
+            return;
+        position.y = _TerrainPosition.y + SampleHeight(normalizedPos);
+        
+        float3 posToCam = normalize(_WSpaceCameraPos - position);
+        
+        float3 bitangent = float3(1, 0, 0);
+        float3 tangent = float3(0, 0, 1);
+        
+        float3 vertexBitangent = FitTerrainPosition(position + bitangent * 0.01);
+        float3 vertexTangent = FitTerrainPosition(position + tangent * 0.01);
+        float3 newBitangent = (vertexBitangent - position).xyz;
+        float3 newTangent = (vertexTangent - position).xyz;
+        float3 norm = normalize(cross(newTangent, newBitangent));
+        
+        uint distanceCull = DistanceCull(position, hash.x);
+        uint frustumCull = FrustumCull(position);
+        
+        if (distanceCull == 0 || frustumCull == 0)
+            return;
+        
+        float baseHeight = bladeParameters.baseHeight;
+        float heightRandom = bladeParameters.heightRandom;
+        float baseWidth = bladeParameters.baseWidth;
+        float widthRandom = bladeParameters.widthRandom;
+        float baseTilt = bladeParameters.baseTilt;
+        float tiltRandom = bladeParameters.tiltRandom;
+        float baseBend = bladeParameters.baseBend;
+        float bendRandom = bladeParameters.bendRandom;
+        
+        GrassBlade blade;
+        blade.position = position;
+        float2 clumpHash = HashFloat2(clumpCentre);
+        float2 sharedClumpingFacing = normalize(tan((clumpHash + float2(0.13, 1.111)) * 2 - 1));
+        float2 bladeFacing = normalize(HashFloat2(id.xy) * 2 - 1);
+        bladeFacing = normalize(lerp(bladeFacing, sharedClumpingFacing, bladeParameters.pointInSameDirection));
+        float combinedFacingAngle = atan2(bladeFacing.y, bladeFacing.x);
+        
+        float2 worldUV = position.xz;
+        float2 localWindUV = worldUV * _LocalWindScale;
+        localWindUV += _Time * float2(1, 0.7) * _LocalWindSpeed;
+        float localWind = _LocalWindTex.SampleLevel(LinearRepeatSampler, localWindUV, 0).r;
+        float localTheta = ((localWind * 2) - 1) * 3.14159;
+        float2 localWindDir = float2(cos(localTheta), sin(localTheta));
+        float2 grassSideVec = normalize(float2(-bladeFacing.y, bladeFacing.x));
+        float rotateBladeFromLocalWindAmount = dot(grassSideVec, localWindDir);
+        float localWindRotateAngle = rotateBladeFromLocalWindAmount * (3.14159 / 2) * _LocalWindRotateAmount;
+        combinedFacingAngle += localWindRotateAngle;
+        
+        float3 posToPeople = _PeopleTransform - position;
+        float peopleDistance = length(posToPeople);
+        float3 peopleDir = normalize(posToPeople);
+        
+        
+        blade.rotAngle = combinedFacingAngle;
+        
+        blade.hash = Rand(id.xyx);
+        
+        blade.height = baseHeight + Remap(Rand(id.xxy)) * heightRandom;
+        blade.width = baseWidth + Remap(Rand(id.yxx)) * widthRandom;
+        
+        blade.tilt = baseTilt + Remap(Rand(id.xyx * float3(1.12, 3.3, 17.6))) * tiltRandom;
+        blade.bend = baseBend + Remap(Rand(id.xyy * float3(12.32, 0.23, 3.39))) * bendRandom;
+        
+        //
+        blade.bend += localWind * _LocalWindStrength;
+        
+        blade.surfaceNorm = norm;
+        
+        float viewAlignment = abs(dot(bladeFacing, normalize(posToCam.xz)));
+        float sideBend = smoothstep(0.3, 0, viewAlignment) * 1.5;
+        blade.sideBend = sideBend;
+        blade.windForce = localWind * _LocalWindStrength;
+        
+        blade.pushAngle = 0;
+        if (peopleDistance < _PeopleSpacing)
+        {
+            blade.rotAngle = atan2(peopleDir.z, peopleDir.x);
+            blade.sideBend = 0;
+            blade.pushAngle = lerp((3.14159 / 2), (3.14159 / 4), peopleDistance / _PeopleSpacing);
+            //blade.pushAngle = (3.14159 / 2);
+        }
+            
+        
+        //if (tid.x == 0 && tid.y == 0)
+        //{
+        //    base_bias = InterlockedAdd(...);
+
+        //}
+        //GroupMemoryBarrierWithGroupSync();
+        //_GrassBlades[base_biase + tid.x + (tid.y << 3)] = blade;
+        
+        _GrassBlades.Append(blade);
+        
+    }
+}
