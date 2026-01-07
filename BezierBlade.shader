@@ -316,190 +316,190 @@ Shader "Unlit/BezierBlade"
                 InitializeBRDFData(albedo, 0, half3(1, 1, 1), gloss, alpha, brdfData); // albedo metallic spec gloss 
                 float3 directBRDF = DirectBRDF(brdfData, n, mainLight.direction, v) * mainLight.color;
 
-                float3 finalColor = GI * albedo + directBRDF * saturate(mainLight.shadowAttenuation * mainLight.distanceAttenuation);
+                float3 finalColor = smoothstep(0.01, 0.5, GI) * albedo + directBRDF * saturate(mainLight.shadowAttenuation * mainLight.distanceAttenuation);
                 return half4(finalColor, grassColor.a);
             }
 
             ENDHLSL
         }
 
-   //      Pass
-   //      {
-   //          Name "ShadowCaster"
-   //          Tags {"LightMode" = "ShadowCaster"}
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags {"LightMode" = "ShadowCaster"}
 
-   //          Cull Off
-   //          ZWrite On
-   //          ZTest LEqual
+            Cull Off
+            ZWrite On
+            ZTest LEqual
 
-   //          HLSLPROGRAM
-   //          #pragma prefer_hlslcc gles
-   //          #pragma exclude_renderers d3d11_9x
-   //          #pragma target 2.0
+            HLSLPROGRAM
+            #pragma prefer_hlslcc gles
+            #pragma exclude_renderers d3d11_9x
+            #pragma target 2.0
 
-   //          #pragma vertex ShadowCastVert
-   //          #pragma fragment ShadowCastFrag
+            #pragma vertex ShadowCastVert
+            #pragma fragment ShadowCastFrag
 
-   //          #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-   //          #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
-   //          #include "CubicBezier.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            #include "CubicBezier.hlsl"
 
-   //          struct GrassBlade
-   //          {
-   //              float3 position;
-   //              float3 rotAngle;
-   //              float hash;
-   //              float height;
-   //              float width;
-   //              float tilt;
-   //              float bend;
-   //              float3 surfaceNorm;
-   //              float windForce;
-   //              float sideBend;
-   //              float pushAngle;
-   //          };
+            struct GrassBlade
+            {
+                float3 position;
+                float3 rotAngle;
+                float hash;
+                float height;
+                float width;
+                float tilt;
+                float bend;
+                float3 surfaceNorm;
+                float windForce;
+                float sideBend;
+                float pushAngle;
+            };
             
-   //          StructuredBuffer<GrassBlade> _GrassBlades;
-   //          StructuredBuffer<int> Triangles;
-   //          StructuredBuffer<float4> Colors;
-   //          StructuredBuffer<float2> Uvs;
+            StructuredBuffer<GrassBlade> _GrassBlades;
+            StructuredBuffer<int> Triangles;
+            StructuredBuffer<float4> Colors;
+            StructuredBuffer<float2> Uvs;
 
-   //          float _TaperAmount;
-   //          float _CurvedNormalAmount;
-   //          float _p1Offset;
-   //          float _p2Offset;
+            float _TaperAmount;
+            float _CurvedNormalAmount;
+            float _p1Offset;
+            float _p2Offset;
 
-   //          float4 _TopColor;
-   //          float4 _BottomColor;
+            float4 _TopColor;
+            float4 _BottomColor;
 
-   //          float _WaveAmplitude;
-   //          float _WaveSpeed;
-   //          float _SinOffsetRange;
-   //          float _PushTipForward;
+            float _WaveAmplitude;
+            float _WaveSpeed;
+            float _SinOffsetRange;
+            float _PushTipForward;
 
-   //          float3 GetP0()
-   //          {
-   //              return float3(0.0, 0.0, 0.0);
-   //          }
+            float3 GetP0()
+            {
+                return float3(0.0, 0.0, 0.0);
+            }
 
-   //          float3 GetP3(float height, float tilt)
-   //          {
-   //              float p3y = tilt * height;
-   //              float p3x = sqrt(height * height - p3y * p3y);
-   //              return float3(-p3x, p3y, 0);
-   //          }
+            float3 GetP3(float height, float tilt)
+            {
+                float p3y = tilt * height;
+                float p3x = sqrt(height * height - p3y * p3y);
+                return float3(-p3x, p3y, 0);
+            }
 
-   //          void GetP1P2P3(float3 p0, inout float3 p3, float bend, float hash, float windForce, out float3 p1, out float3 p2)
-   //          {
-   //              p1 = lerp(p0, p3, 0.33);
-   //              p2 = lerp(p0, p3, 0.66);
-   //              float3 bladeDir = normalize(p3 - p0);
-   //              float3 bezCtrlOffsetDir = normalize(cross(bladeDir, float3(0, 0, 1)));
+            void GetP1P2P3(float3 p0, inout float3 p3, float bend, float hash, float windForce, out float3 p1, out float3 p2)
+            {
+                p1 = lerp(p0, p3, 0.33);
+                p2 = lerp(p0, p3, 0.66);
+                float3 bladeDir = normalize(p3 - p0);
+                float3 bezCtrlOffsetDir = normalize(cross(bladeDir, float3(0, 0, 1)));
 
-   //              p1 += bezCtrlOffsetDir * _p1Offset * bend;
-   //              p2 += bezCtrlOffsetDir * _p2Offset * bend;
+                p1 += bezCtrlOffsetDir * _p1Offset * bend;
+                p2 += bezCtrlOffsetDir * _p2Offset * bend;
 
-   //              float p2WindEffect = sin((_Time.y + hash * 2 * PI) * _WaveSpeed + 0.66 * 2 * PI * _SinOffsetRange) * windForce;
-   //              p2WindEffect *= 0.66 * _WaveAmplitude;
+                float p2WindEffect = sin((_Time.y + hash * 2 * PI) * _WaveSpeed + 0.66 * 2 * PI * _SinOffsetRange) * windForce;
+                p2WindEffect *= 0.66 * _WaveAmplitude;
 
-   //              float p3WindEffect = sin((_Time.y + hash * 2 * PI) * _WaveSpeed + 1.0 * 2 * PI * _SinOffsetRange) * windForce + _PushTipForward * (1 - bend); 
-   //              p3WindEffect *= _WaveAmplitude;
+                float p3WindEffect = sin((_Time.y + hash * 2 * PI) * _WaveSpeed + 1.0 * 2 * PI * _SinOffsetRange) * windForce + _PushTipForward * (1 - bend); 
+                p3WindEffect *= _WaveAmplitude;
 
-   //              p2 += bezCtrlOffsetDir * p2WindEffect;
-   //              p3 += bezCtrlOffsetDir * p3WindEffect;
-   //          }
+                p2 += bezCtrlOffsetDir * p2WindEffect;
+                p3 += bezCtrlOffsetDir * p3WindEffect;
+            }
 
-   //          float3x3 RotAxis3x3(float angle, float3 axis)
-   //          {
-   //              axis = normalize(axis);
+            float3x3 RotAxis3x3(float angle, float3 axis)
+            {
+                axis = normalize(axis);
 
-   //              float s, c;
-   //              sincos(angle, s, c);
+                float s, c;
+                sincos(angle, s, c);
 
-   //              float t = 1.0 - c;
+                float t = 1.0 - c;
 
-   //              float x = axis.x;
-   //              float y = axis.y;
-   //              float z = axis.z;
+                float x = axis.x;
+                float y = axis.y;
+                float z = axis.z;
 
-   //              float xy = x * y;
-   //              float xz = x * z;
-   //              float yz = y * z;
-   //              float xs = x * s;
-   //              float ys = y * s;
-   //              float zs = z * s;
+                float xy = x * y;
+                float xz = x * z;
+                float yz = y * z;
+                float xs = x * s;
+                float ys = y * s;
+                float zs = z * s;
 
-   //              float m00 = t * x * x + c;
-   //              float m01 = t * xy - zs;
-   //              float m02 = t * xz + ys;
+                float m00 = t * x * x + c;
+                float m01 = t * xy - zs;
+                float m02 = t * xz + ys;
                 
-   //              float m10 = t * xy + zs;
-   //              float m11 = t * y * y + c;
-   //              float m12 = t * yz - xs;
+                float m10 = t * xy + zs;
+                float m11 = t * y * y + c;
+                float m12 = t * yz - xs;
 
-   //              float m20 = t * xz - ys;
-   //              float m21 = t * yz + xs;
-   //              float m22 = t * z * z + c;
+                float m20 = t * xz - ys;
+                float m21 = t * yz + xs;
+                float m22 = t * z * z + c;
 
-   //              return float3x3(
-   //                  m00, m01, m02,
-   //                  m10, m11, m12,
-   //                  m20, m21, m22
-   //              );
-   //          }
+                return float3x3(
+                    m00, m01, m02,
+                    m10, m11, m12,
+                    m20, m21, m22
+                );
+            }
 
-   //          struct Attributes
-			// {
-			// 	uint VertexID : SV_VertexID;
-			// 	uint InstanceID : SV_InstanceID;
-			// };
+            struct Attributes
+			{
+				uint VertexID : SV_VertexID;
+				uint InstanceID : SV_InstanceID;
+			};
 
-   //          float4 ShadowCastVert(Attributes IN) : SV_POSITION
-   //          {
-   //              uint VertexID = IN.VertexID;
-   //              uint InstanceID = IN.InstanceID;
+            float4 ShadowCastVert(Attributes IN) : SV_POSITION
+            {
+                uint VertexID = IN.VertexID;
+                uint InstanceID = IN.InstanceID;
 
-   //              GrassBlade blade = _GrassBlades[InstanceID];
-   //              float bend = blade.bend;
-   //              float height = blade.height;
-   //              float tilt = blade.tilt;
-   //              float hash = blade.hash;
-   //              float windForce = blade.windForce;
-   //              float width = blade.width;
+                GrassBlade blade = _GrassBlades[InstanceID];
+                float bend = blade.bend;
+                float height = blade.height;
+                float tilt = blade.tilt;
+                float hash = blade.hash;
+                float windForce = blade.windForce;
+                float width = blade.width;
 
-   //              float3 p0 = GetP0();
-   //              float3 p3 = GetP3(height, tilt);
-   //              float3 p1, p2;
-   //              GetP1P2P3(p0, p3, bend, hash, windForce, p1, p2);
+                float3 p0 = GetP0();
+                float3 p3 = GetP3(height, tilt);
+                float3 p1, p2;
+                GetP1P2P3(p0, p3, bend, hash, windForce, p1, p2);
 
-   //              int positionIndex = Triangles[VertexID];
-   //              float4 vertColor = Colors[positionIndex];
-   //              float side = vertColor.g * 2 - 1;
-   //              float t = vertColor.r;
-   //              float3 centerPos = CubicBezier(p0, p1, p2, p3, t);
-   //              float3 position = centerPos + float3(0, 0, side * width);
+                int positionIndex = Triangles[VertexID];
+                float4 vertColor = Colors[positionIndex];
+                float side = vertColor.g * 2 - 1;
+                float t = vertColor.r;
+                float3 centerPos = CubicBezier(p0, p1, p2, p3, t);
+                float3 position = centerPos + float3(0, 0, side * width);
 
-   //              float3 tangent = CubicBezierTangent(p0, p1, p2, p3, t);
-   //              float3x3 rotMat = RotAxis3x3(-blade.rotAngle, float3(0, 1, 0));
-   //              float3x3 sideRot = RotAxis3x3(blade.sideBend, normalize(tangent));
-   //              float3x3 pushRot = RotAxis3x3(blade.pushAngle, float3(0, 0, 1));
+                float3 tangent = CubicBezierTangent(p0, p1, p2, p3, t);
+                float3x3 rotMat = RotAxis3x3(-blade.rotAngle, float3(0, 1, 0));
+                float3x3 sideRot = RotAxis3x3(blade.sideBend, normalize(tangent));
+                float3x3 pushRot = RotAxis3x3(blade.pushAngle, float3(0, 0, 1));
 
-   //              position = mul(pushRot, position);
-   //              position = position - centerPos;
-   //              position = mul(sideRot, position);
-   //              position = position + centerPos;
-   //              position = mul(rotMat, position);
-   //              position += blade.position;
+                position = mul(pushRot, position);
+                position = position - centerPos;
+                position = mul(sideRot, position);
+                position = position + centerPos;
+                position = mul(rotMat, position);
+                position += blade.position;
 
-   //              return TransformWorldToHClip(position);
-   //          }
+                return TransformWorldToHClip(position);
+            }
 
-   //          float4 ShadowCastFrag() : SV_Target
-			// {
-			// 	return 0; // depth only
-			// }
-   //          ENDHLSL
-   //      }
+            float4 ShadowCastFrag() : SV_Target
+			{
+				return 0; // depth only
+			}
+            ENDHLSL
+        }
 
     }
     Fallback "Hidden/InternalErrorShader"
